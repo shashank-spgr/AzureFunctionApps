@@ -44,50 +44,61 @@ namespace AzureFunctionApps
         }
 
         [FunctionName("GetToDoById")]
-        public static IActionResult GetTodoById([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "ToDo/{id}")] HttpRequest req, string id, ILogger logger)
+        public static IActionResult GetTodoById(
+            [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "ToDo/{id}")] HttpRequest req,
+            [Table("todos", "TODO", "{id}", Connection = "AzureWebJobsStorage")] TodoTableEntity todo,
+            string id, ILogger logger)
         {
             logger.LogInformation("getting the ToDo list");
-
-            //var todo = items.FirstOrDefault(t => t.Id == id);
-            //if (todo == null)
-            //{
-            //    return new NotFoundResult();
-            //}
+            if (todo == null)
+            {
+                logger.LogInformation($"Item {id} not found");
+                return new NotFoundResult();
+            }
             return new OkResult();
         }
 
         [FunctionName("UpdateToDo")]
-        public static async Task<IActionResult> UpdateTodo([HttpTrigger(AuthorizationLevel.Anonymous, "put", Route = "ToDo/{id}")] HttpRequest req, string id, ILogger logger)
+        public static async Task<IActionResult> UpdateTodo(
+            [HttpTrigger(AuthorizationLevel.Anonymous, "put", Route = "ToDo/{id}")] HttpRequest req,
+            [Table("todos", Connection = "AzureWebJobsStorage")] CloudTable todoTable,
+            string id, ILogger logger)
         {
-            object todo = null;
-            //var todo = items.FirstOrDefault(x => x.Id == id);
-            if (todo == null)
+            string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
+            var updated = JsonConvert.DeserializeObject<TodoUpdateModel>(requestBody);
+            var findOperation = TableOperation.Retrieve<TodoTableEntity>("TODO", id);
+            var findResult = await todoTable.ExecuteAsync(findOperation);
+
+            if (findResult == null)
+                return new NotFoundResult();
+
+            var existingRow = (TodoTableEntity)findResult.Result;
+            existingRow.IsCompleted = updated.IsCompleted;
+            if (!string.IsNullOrEmpty(updated.TaskDescription))
+            {
+                existingRow.TaskDescription = updated.TaskDescription;
+            }
+
+            return new OkObjectResult(findResult);
+        }
+
+        [FunctionName("DeleteToDo")]
+        public static async Task<IActionResult> DeleteTodo(
+            [HttpTrigger(AuthorizationLevel.Anonymous, "delete", Route = "ToDo/{id}")] HttpRequest req,
+            [Table("todos", Connection = "AzureWebJobsStorage")] CloudTable todoTable,
+            string id, ILogger logger)
+        {
+            var deleteOperation = TableOperation.Delete(new TableEntity() { PartitionKey = "TODO", RowKey = id, ETag = "*" });
+
+            try
+            {
+                var deleteResult = await todoTable.ExecuteAsync(deleteOperation);
+            }
+            catch (StorageException e) when (e.RequestInformation.HttpStatusCode == 404)
             {
                 return new NotFoundResult();
             }
 
-            string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
-            var updated = JsonConvert.DeserializeObject<TodoUpdateModel>(requestBody);
-
-            //todo.IsCompleted = updated.IsCompleted;
-            //if (!string.IsNullOrEmpty(updated.TaskDescription))
-            //{
-            //    todo.TaskDescription = updated.TaskDescription;
-            //}
-
-            return new OkObjectResult(todo);
-        }
-
-        [FunctionName("DeleteToDo")]
-        public static IActionResult DeleteTodo([HttpTrigger(AuthorizationLevel.Anonymous, "delete", Route = "ToDo/{id}")] HttpRequest req, string id, ILogger logger)
-        {
-            //var todo = items.FirstOrDefault(x => x.Id == id);
-
-            //if (todo == null)
-            //{
-            //    return new NotFoundResult();
-            //}
-            //items.Remove(todo);
             return new OkResult();
         }
     }
